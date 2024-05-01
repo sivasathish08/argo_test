@@ -1,0 +1,92 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: ci-python-example-
+spec:
+  entrypoint: ci-python-example
+  volumeClaimTemplates:
+  - metadata:
+      name: workdir
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: 1Gi
+
+  templates:
+  - name: ci-python-example
+    steps:
+    - - name: checkout
+        template: checkout
+    - - name: static-check
+        template: flake8
+    - - name: unittest
+        template: pytest
+        arguments:
+          parameters:
+          - name: python-version
+            value: "{{item.tag}}"
+        withItems:
+        - { tag: '3.8' }
+        - { tag: '3.9' }
+        - { tag: '3.10' }
+    - - name: summary
+        template: run-hello
+
+  - name: checkout
+    inputs:
+      artifacts:
+      - name: code
+        path: /workspace/hello-python
+        git:
+          repo: https://github.com/larrycai/hello-python.git
+          revision: main
+    container:
+      image: golang:1.18
+      command: [sh, -c]
+      args: ["pwd && env && cd /workspace/hello-python && git status && ls"]
+      volumeMounts:
+      - name: workdir
+        mountPath: /workspace
+
+  - name: flake8
+    container:
+      image: python:3.9
+      command: [sh, -c]
+      args:
+      - |
+        pip install flake8
+        cd /workspace/hello-python
+        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+      volumeMounts:
+      - name: workdir
+        mountPath: /workspace
+  - name: pytest
+    inputs:
+      parameters:
+      - name: python-version
+    container:
+      image: "python:{{inputs.parameters.python-version}}"
+      command: [sh, -c]
+      args:
+      - |
+        pip install pytest pytest-cov coverage
+        cd /workspace/hello-python
+        pytest --cov=app/ --cov-report=xml
+      volumeMounts:
+      - name: workdir
+        mountPath: /workspace
+
+  - name: run-hello
+    container:
+      image: "ubuntu:focal"
+      command: [sh, -c]
+      args:
+      - |
+        uname -a
+        cat /etc/os-release
+        find /workspace
+      volumeMounts:
+      - name: workdir
+        mountPath: /workspace
